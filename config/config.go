@@ -11,8 +11,9 @@ func LoadConfig() Config {
 		URLs: []string{
 			"https://saastech.com/",
 			"https://saastech.com/index.html",
+			
 		},
-		Concurrency: 10,
-		TotalReq:    50,
+		Concurrency: 1,
+		TotalReq:    5,
 	}
 }

@@ -1,78 +1,82 @@
 package loadtest
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
-	"performance_testing/utils"
+
 	"performance_testing/config"
+	"performance_testing/utils"
 )
 
-type Result struct {
-	Success       int
-	Fail          int
-	Duration      time.Duration
-	AvgResp       float64
-	CPUPercent    float64
-	RAMUsedMB     float64
-	GoroutinesNum int
-}
-
-func RunTest(cfg config.Config) Result {
-	start := time.Now()
+func RunTest(cfg config.Config) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	success, fail := 0, 0
 	times := []time.Duration{}
-
+	reqID := 0
 	sem := make(chan struct{}, cfg.Concurrency)
 
-	for i := 0; i < cfg.TotalReq; i++ {
+	// total requests counter
+	totalCount := 0
+
+	for totalCount < cfg.TotalReq {
 		for _, url := range cfg.URLs {
+			if totalCount >= cfg.TotalReq {
+				break
+			}
+
+			reqID++
+			totalCount++
 			wg.Add(1)
 			sem <- struct{}{}
 
-			go func(u string) {
+			go func(id int, u string) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				reqStart := time.Now()
+				start := time.Now()
 				resp, err := http.Get(u)
-				duration := time.Since(reqStart)
+				latency := time.Since(start)
 
-				mu.Lock()
-				times = append(times, duration)
-				if err != nil || resp.StatusCode >= 400 {
-					fail++
-				} else {
-					success++
-				}
-				mu.Unlock()
-
+				status := "✅"
+				code := 0
 				if resp != nil {
+					code = resp.StatusCode
 					resp.Body.Close()
 				}
-			}(url)
+				if err != nil || code >= 400 {
+					status = "❌"
+				}
+
+				mu.Lock()
+				times = append(times, latency)
+
+				// running average
+				var total float64
+				for _, t := range times {
+					total += float64(t.Milliseconds())
+				}
+				avgResp := total / float64(len(times))
+
+				// log per request
+				fmt.Printf("[%s] Request %d %s  %v ms  %s %d  CPU: %.2f%%  RAM: %.2f MB | Average Response: %.2f ms\n",
+					time.Now().Format("2006-01-02 15:04:05"),
+					id,
+					u,
+					latency.Milliseconds(),
+					status,
+					code,
+					utils.GetCPUUsage(),
+					utils.GetRAMUsage(),
+					avgResp,
+				)
+				mu.Unlock()
+
+			}(reqID, url)
 		}
 	}
 
 	wg.Wait()
-	totalDuration := time.Since(start)
-
-	var total float64
-	for _, d := range times {
-		total += float64(d.Milliseconds())
-	}
-	avg := total / float64(len(times))
-
-	return Result{
-		Success:       success,
-		Fail:          fail,
-		Duration:      totalDuration,
-		AvgResp:       avg,
-		CPUPercent:    utils.GetCPUUsage(),
-		RAMUsedMB:     utils.GetRAMUsage(),
-		GoroutinesNum: utils.GetGoroutineCount(),
-	}
 }
