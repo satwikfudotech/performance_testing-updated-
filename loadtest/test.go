@@ -1,8 +1,10 @@
 package loadtest
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -18,8 +20,24 @@ func RunTest(cfg config.Config) {
 	reqID := 0
 	sem := make(chan struct{}, cfg.Concurrency)
 
-	// total requests counter
 	totalCount := 0
+
+	// 🔹 create CSV file
+	file, err := os.Create("results.csv")
+	if err != nil {
+		fmt.Println("Error creating CSV file:", err)
+		return
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// 🔹 write header row
+	writer.Write([]string{
+		"Timestamp", "RequestID", "URL", "Latency(ms)", "Status", "HTTPCode",
+		"CPU(%)", "RAM(MB)", "AverageResponse(ms)",
+	})
 
 	for totalCount < cfg.TotalReq {
 		for _, url := range cfg.URLs {
@@ -60,18 +78,32 @@ func RunTest(cfg config.Config) {
 				}
 				avgResp := total / float64(len(times))
 
-				// log per request
+				// system stats
+				cpu := utils.GetCPUUsage()
+				ram := utils.GetRAMUsage()
+
+				// timestamp
+				timestamp := time.Now().Format("2006-01-02 15:04:05")
+
+				// 🔹 log to console
 				fmt.Printf("[%s] Request %d %s  %v ms  %s %d  CPU: %.2f%%  RAM: %.2f MB | Average Response: %.2f ms\n",
-					time.Now().Format("2006-01-02 15:04:05"),
-					id,
-					u,
-					latency.Milliseconds(),
-					status,
-					code,
-					utils.GetCPUUsage(),
-					utils.GetRAMUsage(),
-					avgResp,
+					timestamp, id, u, latency.Milliseconds(), status, code, cpu, ram, avgResp,
 				)
+
+				// 🔹 write to CSV
+				writer.Write([]string{
+					timestamp,
+					fmt.Sprintf("%d", id),
+					u,
+					fmt.Sprintf("%d", latency.Milliseconds()),
+					status,
+					fmt.Sprintf("%d", code),
+					fmt.Sprintf("%.2f", cpu),
+					fmt.Sprintf("%.2f", ram),
+					fmt.Sprintf("%.2f", avgResp),
+				})
+				writer.Flush()
+
 				mu.Unlock()
 
 			}(reqID, url)
